@@ -1,0 +1,22 @@
+{
+  "timeZone": "Etc/UTC",
+  "exceptionLogging": "STACKDRIVER",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+    "https://www.googleapis.com/auth/script.external_request"
+  ],
+  "addOns": {
+    "common": {
+      "name": "Malicious Email Scorer",
+      "logoUrl": "https://www.gstatic.com/images/icons/material/system/2x/email_black_48dp.png"
+    },
+    "gmail": {
+      "contextualTriggers": [
+        {
+          "unconditional": {},
+          "onTriggerFunction": "buildAddOn"
+        }
+      ]
+    }
+  }
+}
