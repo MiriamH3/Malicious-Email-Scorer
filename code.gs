@@ -27,8 +27,24 @@ function getCurrentEmail_(e) {
   return {
     subject: message.getSubject(),
     sender: message.getFrom(),
-    body: message.getPlainBody()
+    body: message.getPlainBody(),
+    attachments: getAttachmentDetails_(message)
   };
+}
+
+function getAttachmentDetails_(message) {
+  var attachments = message.getAttachments({
+    includeInlineImages: false,
+    includeAttachments: true
+  });
+
+  return attachments.map(function(attachment) {
+    return {
+      name: attachment.getName(),
+      contentType: attachment.getContentType(),
+      size: attachment.getSize()
+    };
+  });
 }
 
 function escapeCardText_(value) {
