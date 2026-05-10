@@ -1,3 +1,4 @@
+import difflib
 import re
 from typing import Any
 
@@ -45,6 +46,25 @@ ORGANIZATION_TERMS = {
     "netflix",
     "paypal",
 }
+
+POPULAR_BRAND_DOMAINS = [
+    "apple",
+    "bankleumi",
+    "google",
+    "microsoft",
+    "paypal",
+]
+
+NUMBER_SUBSTITUTIONS = str.maketrans(
+    {
+        "0": "o",
+        "1": "l",
+        "3": "e",
+        "4": "a",
+        "5": "s",
+        "7": "t",
+    }
+)
 
 DANGEROUS_ATTACHMENT_EXTENSIONS = {
     ".bat",
@@ -126,6 +146,10 @@ def score_email(
             "Sender uses a public email domain while the message references a bank or company."
         )
 
+    typosquatting_score, typosquatting_reasons = score_sender_typosquatting(sender)
+    score += typosquatting_score
+    reasons.extend(typosquatting_reasons)
+
     attachment_score, attachment_reasons = score_attachments(attachments)
     score += attachment_score
     reasons.extend(attachment_reasons)
@@ -161,6 +185,61 @@ def contains_organization_terms(text: str) -> bool:
 
 def find_insecure_http_urls(urls: list[str]) -> list[str]:
     return [url for url in urls if url.lower().startswith("http://")]
+
+
+def score_sender_typosquatting(sender: str) -> tuple[int, list[str]]:
+    domain_label = extract_sender_domain_label(sender)
+    if not domain_label:
+        return 0, []
+
+    score = 0
+    reasons = []
+
+    if domain_uses_number_substitution(domain_label):
+        score += 40
+        reasons.append(
+            f"Sender domain '{domain_label}' appears to use numbers instead of letters."
+        )
+
+    similar_domain = find_similar_popular_domain(domain_label)
+    if similar_domain:
+        score += 50
+        reasons.append(
+            f"Sender domain '{domain_label}' is similar to popular domain '{similar_domain}'."
+        )
+
+    return score, reasons
+
+
+def extract_sender_domain_label(sender: str) -> str:
+    domain = extract_sender_domain(sender)
+    if not domain:
+        return ""
+
+    return domain.split(".")[0]
+
+
+def domain_uses_number_substitution(domain_label: str) -> bool:
+    if not any(character.isdigit() for character in domain_label):
+        return False
+
+    normalized_domain = domain_label.translate(NUMBER_SUBSTITUTIONS)
+    return any(
+        difflib.SequenceMatcher(None, normalized_domain, popular_domain).ratio() >= 0.8
+        for popular_domain in POPULAR_BRAND_DOMAINS
+    )
+
+
+def find_similar_popular_domain(domain_label: str) -> str:
+    if domain_label in POPULAR_BRAND_DOMAINS:
+        return ""
+
+    for popular_domain in POPULAR_BRAND_DOMAINS:
+        similarity = difflib.SequenceMatcher(None, domain_label, popular_domain).ratio()
+        if similarity >= 0.8:
+            return popular_domain
+
+    return ""
 
 
 def score_attachments(attachments: list[dict[str, Any]]) -> tuple[int, list[str]]:
