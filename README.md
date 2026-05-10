@@ -36,7 +36,6 @@ Gmail message opened by user
         v
 Google Workspace Add-on
 code.gs
-        |
         | POST /analyze
         v
 Python HTTP backend
@@ -367,10 +366,6 @@ Important limitations:
 
 ## Design decisions and trade-offs
 
-### Rule-based scoring over ML
-
-I chose a rule-based analyzer because the assignment values explainability and communication. Each score contribution can be shown directly to the user as a reason.
-
 ### Backend separation
 
 The add-on extracts Gmail-specific data and renders the result. The backend owns the analysis logic. This keeps Apps Script small and makes the phishing logic easier to test and evolve.
@@ -384,37 +379,7 @@ The add-on requests access only to the current Gmail message. This is a delibera
 The current version does not upload full attachments. This reduces privacy and security risk for a demo while still allowing useful checks such as double extensions and risky file types.
 
 ## What I would improve next
-
-- Add authentication between the add-on and backend.
-- Add structured tests for `analyzer.py`.
-- Add URL redirect expansion and domain reputation checks.
-- Add mismatch detection between anchor text and actual link destination.
+- Implement an AI-driven approach to detect urgency in emails more accurately.
+- Develop a more sophisticated scoring algorithm where the risk score increases exponentially based on the combination of suspicious signals.
 - Add optional attachment hashing or safe sandbox scanning.
-- Move the backend to a stable deployment target such as Cloud Run, Render, or Railway.
-- Add a configuration layer for scoring weights.
 
-## Validation performed during development
-
-The current implementation was validated with:
-
-```bash
-python3 -m json.tool appsscript.json
-node --check --input-type=commonjs < code.gs
-python3 -m py_compile app.py analyzer.py
-```
-
-Additional manual regression checks were run for:
-
-- payload normalization
-- body vs subject keyword weights
-- display-name spoofing
-- public-domain impersonation
-- urgency + URL correlation
-- URL shorteners
-- insecure HTTP URLs
-- direct IP URLs
-- typosquatting with `difflib`
-- double-extension attachments
-- hidden-extension spacing
-- local `POST /analyze`
-- live ngrok `POST /analyze`
