@@ -120,8 +120,14 @@ HIDDEN_EXTENSION_SPACES_PATTERN = re.compile(r"\s{5,}\.[^.\\/\s]+$")
 
 
 def main(payload: dict[str, Any]) -> dict[str, Any]:
-    subject, sender, body, links, attachments = extract_email_data(payload)
-    score, reasons = score_email(subject, sender, body, links, attachments)
+    email = normalize_payload(payload)
+    score, reasons = score_email(
+        email["subject"],
+        email["sender"],
+        email["body"],
+        email["links"],
+        email["attachments"],
+    )
 
     return {
         "status": "ok",
@@ -129,27 +135,56 @@ def main(payload: dict[str, Any]) -> dict[str, Any]:
         "verdict": verdict_for_score(score),
         "reasoning": format_reasoning(reasons),
         "received": {
-            "subject": subject,
-            "sender": sender,
-            "bodyLength": len(body),
-            "linkCount": len(links),
-            "links": links,
-            "attachmentCount": len(attachments),
-            "attachments": attachments,
+            "subject": email["subject"],
+            "sender": email["sender"],
+            "bodyLength": len(email["body"]),
+            "linkCount": len(email["links"]),
+            "links": email["links"],
+            "attachmentCount": len(email["attachments"]),
+            "attachments": email["attachments"],
         },
     }
 
 
-def extract_email_data(
-    payload: dict[str, Any],
-) -> tuple[str, str, str, list[dict[str, Any]], list[dict[str, Any]]]:
-    subject = to_text(payload.get("subject"))
-    sender = to_text(payload.get("sender"))
-    body = to_text(payload.get("body"))
-    links = normalize_links(payload.get("links"))
-    attachments = normalize_attachments(payload.get("attachments"))
+def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    def as_text(value: Any) -> str:
+        return "" if value is None else str(value)
 
-    return subject, sender, body, links, attachments
+    def as_int(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    raw_links = payload.get("links")
+    raw_attachments = payload.get("attachments")
+
+    return {
+        "subject": as_text(payload.get("subject")),
+        "sender": as_text(payload.get("sender")),
+        "body": as_text(payload.get("body")),
+        "links": [
+            {
+                "url": as_text(item.get("url")).strip(),
+                "text": as_text(item.get("text")).strip(),
+            }
+            for item in raw_links
+            if isinstance(item, dict)
+        ]
+        if isinstance(raw_links, list)
+        else [],
+        "attachments": [
+            {
+                "name": as_text(item.get("name")),
+                "contentType": as_text(item.get("contentType")),
+                "size": as_int(item.get("size")),
+            }
+            for item in raw_attachments
+            if isinstance(item, dict)
+        ]
+        if isinstance(raw_attachments, list)
+        else [],
+    }
 
 
 def score_email(
@@ -167,32 +202,9 @@ def score_email(
     score += keyword_score
     reasons.extend(keyword_reasons)
 
-    urls = collect_urls(body, links)
-    if urls:
-        url_score = min(len(urls) * 5, 15)
-        score += url_score
-        reasons.append(f"Contains {len(urls)} link(s).")
-
-    insecure_urls = find_insecure_http_urls(urls)
-    if insecure_urls:
-        score += min(len(insecure_urls) * 12, 24)
-        reasons.append(f"Contains {len(insecure_urls)} insecure HTTP link(s).")
-
-    shortened_urls = find_shortened_urls(urls)
-    if shortened_urls:
-        score += 35
-        reasons.append(
-            "Contains URL shortener link(s): "
-            + ", ".join(sorted({get_url_hostname(url) for url in shortened_urls}))
-            + "."
-        )
-
-    ip_address_urls = find_direct_ip_urls(urls)
-    if ip_address_urls:
-        score += 60
-        reasons.append(
-            f"Contains {len(ip_address_urls)} link(s) that use a direct IP address."
-        )
+    urls, url_score, url_reasons = score_urls(body, links)
+    score += url_score
+    reasons.extend(url_reasons)
 
     if has_urgency_signal(subject, body) and urls:
         score += 30
@@ -312,66 +324,58 @@ def extract_sender_display_name(sender: str) -> str:
     return ""
 
 
-def find_insecure_http_urls(urls: list[str]) -> list[str]:
-    return [url for url in urls if url.lower().startswith("http://")]
-
-
 def collect_urls(body: str, links: list[dict[str, Any]]) -> list[str]:
-    urls = URL_PATTERN.findall(body)
-    urls.extend(link["url"] for link in links if URL_PATTERN.match(link["url"]))
+    urls = URL_PATTERN.findall(body) + [
+        link["url"] for link in links if URL_PATTERN.match(link["url"])
+    ]
+    return list(dict.fromkeys(url.strip() for url in urls if url.strip()))
 
-    return deduplicate_urls(urls)
 
+def score_urls(body: str, links: list[dict[str, Any]]) -> tuple[list[str], int, list[str]]:
+    urls = collect_urls(body, links)
+    if not urls:
+        return urls, 0, []
 
-def deduplicate_urls(urls: list[str]) -> list[str]:
-    seen_urls = set()
-    unique_urls = []
+    insecure_count = 0
+    direct_ip_count = 0
+    shortener_hosts = set()
 
     for url in urls:
-        normalized_url = url.strip()
-        if not normalized_url or normalized_url in seen_urls:
-            continue
+        parsed_url = urlparse(url)
+        hostname = (parsed_url.hostname or "").lower()
+        normalized_hostname = hostname.removeprefix("www.")
 
-        seen_urls.add(normalized_url)
-        unique_urls.append(normalized_url)
+        insecure_count += url.lower().startswith("http://")
+        if normalized_hostname in URL_SHORTENERS:
+            shortener_hosts.add(hostname)
 
-    return unique_urls
+        try:
+            if hostname:
+                ipaddress.ip_address(hostname)
+                direct_ip_count += 1
+        except ValueError:
+            pass
 
+    score = min(len(urls) * 5, 15)
+    reasons = [f"Contains {len(urls)} link(s)."]
 
-def find_shortened_urls(urls: list[str]) -> list[str]:
-    return [
-        url
-        for url in urls
-        if normalize_url_hostname(get_url_hostname(url)) in URL_SHORTENERS
-    ]
+    if insecure_count:
+        score += min(insecure_count * 12, 24)
+        reasons.append(f"Contains {insecure_count} insecure HTTP link(s).")
 
+    if shortener_hosts:
+        score += 35
+        reasons.append(
+            "Contains URL shortener link(s): "
+            + ", ".join(sorted(shortener_hosts))
+            + "."
+        )
 
-def find_direct_ip_urls(urls: list[str]) -> list[str]:
-    return [url for url in urls if is_direct_ip_url(url)]
+    if direct_ip_count:
+        score += 60
+        reasons.append(f"Contains {direct_ip_count} link(s) that use a direct IP address.")
 
-
-def is_direct_ip_url(url: str) -> bool:
-    hostname = get_url_hostname(url)
-    if not hostname:
-        return False
-
-    try:
-        ipaddress.ip_address(hostname)
-    except ValueError:
-        return False
-
-    return True
-
-
-def get_url_hostname(url: str) -> str:
-    return (urlparse(url).hostname or "").lower()
-
-
-def normalize_url_hostname(hostname: str) -> str:
-    if hostname.startswith("www."):
-        return hostname[4:]
-
-    return hostname
+    return urls, score, reasons
 
 
 def score_sender_typosquatting(sender: str) -> tuple[int, list[str]]:
@@ -438,23 +442,30 @@ def score_attachments(attachments: list[dict[str, Any]]) -> tuple[int, list[str]
         reasons.append(f"Includes {len(attachments)} attachment(s).")
 
     for attachment in attachments:
-        name = attachment.get("name", "").lower()
         original_name = attachment.get("name", "")
-        if has_double_extension(name):
-            score += 50
-            reasons.append(
-                f"Attachment has a double extension, which can hide the real file type: {original_name}."
-            )
+        name = original_name.lower()
+        checks = [
+            (
+                has_double_extension(name),
+                50,
+                f"Attachment has a double extension, which can hide the real file type: {original_name}.",
+            ),
+            (
+                has_hidden_extension_spacing(original_name),
+                30,
+                f"Attachment uses many spaces before the extension, which can hide the real file type: {original_name}.",
+            ),
+            (
+                any(name.endswith(extension) for extension in DANGEROUS_ATTACHMENT_EXTENSIONS),
+                20,
+                f"Attachment has a risky file extension: {original_name}.",
+            ),
+        ]
 
-        if has_hidden_extension_spacing(original_name):
-            score += 30
-            reasons.append(
-                f"Attachment uses many spaces before the extension, which can hide the real file type: {original_name}."
-            )
-
-        if any(name.endswith(extension) for extension in DANGEROUS_ATTACHMENT_EXTENSIONS):
-            score += 20
-            reasons.append(f"Attachment has a risky file extension: {original_name}.")
+        for matched, weight, reason in checks:
+            if matched:
+                score += weight
+                reasons.append(reason)
 
     return score, reasons
 
@@ -491,55 +502,3 @@ def verdict_for_score(score: int) -> str:
 
 def format_reasoning(reasons: list[str]) -> str:
     return "\n".join(f"- {reason}" for reason in reasons)
-
-
-def normalize_attachments(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-
-    attachments = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-
-        attachments.append(
-            {
-                "name": to_text(item.get("name")),
-                "contentType": to_text(item.get("contentType")),
-                "size": to_int(item.get("size")),
-            }
-        )
-
-    return attachments
-
-
-def normalize_links(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-
-    links = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-
-        links.append(
-            {
-                "url": to_text(item.get("url")).strip(),
-                "text": to_text(item.get("text")).strip(),
-            }
-        )
-
-    return links
-
-
-def to_text(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value)
-
-
-def to_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
