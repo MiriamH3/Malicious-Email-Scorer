@@ -383,4 +383,5 @@ The current version does not upload full attachments. This reduces privacy and s
 - Develop a more sophisticated scoring algorithm where the risk score increases exponentially based on the combination of suspicious signals.
 - Add optional attachment hashing or safe sandbox scanning.
 - Implement a check to compare the visible anchor text with the actual destination URL to detect deceptive links.
+- Make it work for other languages like Hebrew.
 
