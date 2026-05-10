@@ -170,10 +170,14 @@ function addAnalysisWidgets_(section, analysis) {
       .setText(escapeCardText_(analysis.score === undefined ? "Unknown" : analysis.score))
   );
   section.addWidget(
-    CardService.newDecoratedText()
-      .setTopLabel("Reasoning")
-      .setText(escapeCardText_(analysis.reasoning || "No reasoning returned."))
+    CardService.newTextParagraph()
+      .setText(formatReasoningText_(analysis.reasoning))
   );
+}
+
+function formatReasoningText_(reasoning) {
+  var reasoningText = escapeCardText_(reasoning || "No reasoning returned.");
+  return "<b>Reasoning:</b><br>" + reasoningText.replace(/\r?\n/g, "<br>");
 }
 
 function escapeCardText_(value) {
