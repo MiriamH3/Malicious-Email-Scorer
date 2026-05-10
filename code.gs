@@ -29,12 +29,60 @@ function getCurrentEmail_(e) {
   GmailApp.setCurrentMessageAccessToken(e.gmail.accessToken);
 
   var message = GmailApp.getMessageById(e.gmail.messageId);
+  var htmlBody = message.getBody();
   return {
     subject: message.getSubject(),
     sender: message.getFrom(),
     body: message.getPlainBody(),
+    links: extractLinksFromHtml_(htmlBody),
     attachments: getAttachmentDetails_(message)
   };
+}
+
+function extractLinksFromHtml_(htmlBody) {
+  var links = [];
+  if (!htmlBody) {
+    return links;
+  }
+
+  var anchorPattern = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+  var match;
+  while ((match = anchorPattern.exec(htmlBody)) !== null) {
+    var url = decodeHtmlEntities_(match[1] || match[2] || match[3] || "").trim();
+    if (!url) {
+      continue;
+    }
+
+    links.push({
+      url: url,
+      text: normalizeWhitespace_(decodeHtmlEntities_(stripHtml_(match[4] || "")))
+    });
+  }
+
+  return links;
+}
+
+function stripHtml_(value) {
+  return String(value).replace(/<[^>]*>/g, " ");
+}
+
+function normalizeWhitespace_(value) {
+  return String(value).replace(/\s+/g, " ").trim();
+}
+
+function decodeHtmlEntities_(value) {
+  return String(value)
+    .replace(/&#x([0-9a-f]+);/gi, function(match, codePoint) {
+      return String.fromCharCode(parseInt(codePoint, 16));
+    })
+    .replace(/&#(\d+);/g, function(match, codePoint) {
+      return String.fromCharCode(parseInt(codePoint, 10));
+    })
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
 }
 
 function getAttachmentDetails_(message) {
@@ -96,6 +144,7 @@ function buildServerPayload_(email) {
     subject: email.subject,
     sender: email.sender,
     body: email.body,
+    links: email.links,
     attachments: email.attachments
   };
 }

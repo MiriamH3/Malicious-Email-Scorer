@@ -108,8 +108,8 @@ HIDDEN_EXTENSION_SPACES_PATTERN = re.compile(r"\s{5,}\.[^.\\/\s]+$")
 
 
 def main(payload: dict[str, Any]) -> dict[str, Any]:
-    subject, sender, body, attachments = extract_email_data(payload)
-    score, reasons = score_email(subject, sender, body, attachments)
+    subject, sender, body, links, attachments = extract_email_data(payload)
+    score, reasons = score_email(subject, sender, body, links, attachments)
 
     return {
         "status": "ok",
@@ -120,25 +120,31 @@ def main(payload: dict[str, Any]) -> dict[str, Any]:
             "subject": subject,
             "sender": sender,
             "bodyLength": len(body),
+            "linkCount": len(links),
+            "links": links,
             "attachmentCount": len(attachments),
             "attachments": attachments,
         },
     }
 
 
-def extract_email_data(payload: dict[str, Any]) -> tuple[str, str, str, list[dict[str, Any]]]:
+def extract_email_data(
+    payload: dict[str, Any],
+) -> tuple[str, str, str, list[dict[str, Any]], list[dict[str, Any]]]:
     subject = to_text(payload.get("subject"))
     sender = to_text(payload.get("sender"))
     body = to_text(payload.get("body"))
+    links = normalize_links(payload.get("links"))
     attachments = normalize_attachments(payload.get("attachments"))
 
-    return subject, sender, body, attachments
+    return subject, sender, body, links, attachments
 
 
 def score_email(
     subject: str,
     sender: str,
     body: str,
+    links: list[dict[str, Any]],
     attachments: list[dict[str, Any]],
 ) -> tuple[int, list[str]]:
     score = 0
@@ -150,7 +156,7 @@ def score_email(
             score += weight
             reasons.append(f"Contains suspicious keyword or phrase: '{keyword}'.")
 
-    urls = URL_PATTERN.findall(body)
+    urls = collect_urls(body, links)
     if urls:
         url_score = min(len(urls) * 5, 15)
         score += url_score
@@ -226,6 +232,28 @@ def contains_organization_terms(text: str) -> bool:
 
 def find_insecure_http_urls(urls: list[str]) -> list[str]:
     return [url for url in urls if url.lower().startswith("http://")]
+
+
+def collect_urls(body: str, links: list[dict[str, Any]]) -> list[str]:
+    urls = URL_PATTERN.findall(body)
+    urls.extend(link["url"] for link in links if URL_PATTERN.match(link["url"]))
+
+    return deduplicate_urls(urls)
+
+
+def deduplicate_urls(urls: list[str]) -> list[str]:
+    seen_urls = set()
+    unique_urls = []
+
+    for url in urls:
+        normalized_url = url.strip()
+        if not normalized_url or normalized_url in seen_urls:
+            continue
+
+        seen_urls.add(normalized_url)
+        unique_urls.append(normalized_url)
+
+    return unique_urls
 
 
 def find_shortened_urls(urls: list[str]) -> list[str]:
@@ -401,6 +429,25 @@ def normalize_attachments(value: Any) -> list[dict[str, Any]]:
         )
 
     return attachments
+
+
+def normalize_links(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+
+    links = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+
+        links.append(
+            {
+                "url": to_text(item.get("url")).strip(),
+                "text": to_text(item.get("text")).strip(),
+            }
+        )
+
+    return links
 
 
 def to_text(value: Any) -> str:
