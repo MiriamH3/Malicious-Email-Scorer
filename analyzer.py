@@ -187,12 +187,7 @@ def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def score_email(
-    subject: str,
-    sender: str,
-    body: str,
-    links: list[dict[str, Any]],
-    attachments: list[dict[str, Any]],
+def score_email( subject: str, sender: str, body: str, links: list[dict[str, Any]],attachments: list[dict[str, Any]],
 ) -> tuple[int, list[str]]:
     score = 0
     reasons = []
@@ -215,7 +210,7 @@ def score_email(
         reasons.append("Sender format does not clearly expose an email domain.")
 
     if is_public_domain_impersonating_organization(sender, combined_text):
-        score += 20
+        score += 10
         reasons.append(
             "Sender uses a public email domain while the message references a bank or company."
         )
@@ -261,7 +256,7 @@ def score_keyword_signals(subject: str, body: str) -> tuple[int, list[str]]:
         score += keyword_score
         if keyword in BODY_LOW_SIGNAL_KEYWORDS:
             reasons.append(
-                f"Body contains common financial keyword '{keyword}' with reduced weight."
+                f"Body contains financial keyword '{keyword}'."
             )
         else:
             reasons.append(f"Body contains suspicious keyword or phrase: '{keyword}'.")
@@ -389,7 +384,7 @@ def score_sender_typosquatting(sender: str) -> tuple[int, list[str]]:
     if domain_uses_number_substitution(domain_label):
         score += 40
         reasons.append(
-            f"Sender domain '{domain_label}' appears to use numbers instead of letters."
+            f"Sender domain '{domain_label}' appears to use numbers instead of letters ."
         )
 
     similar_domain = find_similar_popular_domain(domain_label)
