@@ -87,8 +87,24 @@ DANGEROUS_ATTACHMENT_EXTENSIONS = {
     ".zip",
 }
 
+COMMON_ATTACHMENT_EXTENSIONS = {
+    ".doc",
+    ".docx",
+    ".gif",
+    ".jpeg",
+    ".jpg",
+    ".pdf",
+    ".png",
+    ".ppt",
+    ".pptx",
+    ".txt",
+    ".xls",
+    ".xlsx",
+}
+
 URL_PATTERN = re.compile(r"https?://[^\s<>()\"']+", re.IGNORECASE)
 EMAIL_DOMAIN_PATTERN = re.compile(r"@([^>\s]+)")
+HIDDEN_EXTENSION_SPACES_PATTERN = re.compile(r"\s{5,}\.[^.\\/\s]+$")
 
 
 def main(payload: dict[str, Any]) -> dict[str, Any]:
@@ -313,11 +329,46 @@ def score_attachments(attachments: list[dict[str, Any]]) -> tuple[int, list[str]
 
     for attachment in attachments:
         name = attachment.get("name", "").lower()
+        original_name = attachment.get("name", "")
+        if has_double_extension(name):
+            score += 50
+            reasons.append(
+                f"Attachment has a double extension, which can hide the real file type: {original_name}."
+            )
+
+        if has_hidden_extension_spacing(original_name):
+            score += 30
+            reasons.append(
+                f"Attachment uses many spaces before the extension, which can hide the real file type: {original_name}."
+            )
+
         if any(name.endswith(extension) for extension in DANGEROUS_ATTACHMENT_EXTENSIONS):
             score += 20
-            reasons.append(f"Attachment has a risky file extension: {attachment.get('name')}.")
+            reasons.append(f"Attachment has a risky file extension: {original_name}.")
 
     return score, reasons
+
+
+def has_double_extension(filename: str) -> bool:
+    extension_parts = get_filename_extension_parts(filename)
+    if len(extension_parts) < 2:
+        return False
+
+    previous_extension = f".{extension_parts[-2]}"
+    final_extension = f".{extension_parts[-1]}"
+    known_extensions = COMMON_ATTACHMENT_EXTENSIONS | DANGEROUS_ATTACHMENT_EXTENSIONS
+
+    return previous_extension in known_extensions and final_extension in known_extensions
+
+
+def get_filename_extension_parts(filename: str) -> list[str]:
+    clean_filename = filename.strip().lower()
+    parts = [part.strip() for part in clean_filename.split(".") if part.strip()]
+    return parts[1:]
+
+
+def has_hidden_extension_spacing(filename: str) -> bool:
+    return bool(HIDDEN_EXTENSION_SPACES_PATTERN.search(filename))
 
 
 def verdict_for_score(score: int) -> str:
