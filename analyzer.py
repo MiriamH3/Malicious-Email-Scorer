@@ -17,6 +17,35 @@ SUSPICIOUS_KEYWORDS = {
     "verify": 10,
 }
 
+PUBLIC_EMAIL_DOMAINS = {
+    "gmail.com",
+    "hotmail.com",
+    "icloud.com",
+    "live.com",
+    "outlook.com",
+    "proton.me",
+    "protonmail.com",
+    "walla.co.il",
+    "yahoo.com",
+}
+
+ORGANIZATION_TERMS = {
+    "amazon",
+    "apple",
+    "bank",
+    "banking",
+    "company",
+    "facebook",
+    "google",
+    "hapoalim",
+    "instagram",
+    "leumi",
+    "meta",
+    "microsoft",
+    "netflix",
+    "paypal",
+}
+
 DANGEROUS_ATTACHMENT_EXTENSIONS = {
     ".bat",
     ".cmd",
@@ -82,9 +111,20 @@ def score_email(
         score += url_score
         reasons.append(f"Contains {len(urls)} link(s).")
 
+    insecure_urls = find_insecure_http_urls(urls)
+    if insecure_urls:
+        score += min(len(insecure_urls) * 12, 24)
+        reasons.append(f"Contains {len(insecure_urls)} insecure HTTP link(s).")
+
     if sender and not EMAIL_DOMAIN_PATTERN.search(sender):
         score += 8
         reasons.append("Sender format does not clearly expose an email domain.")
+
+    if is_public_domain_impersonating_organization(sender, combined_text):
+        score += 20
+        reasons.append(
+            "Sender uses a public email domain while the message references a bank or company."
+        )
 
     attachment_score, attachment_reasons = score_attachments(attachments)
     score += attachment_score
@@ -95,6 +135,32 @@ def score_email(
         reasons.append("No obvious phishing indicators were detected by the current rules.")
 
     return score, reasons
+
+
+def is_public_domain_impersonating_organization(sender: str, text: str) -> bool:
+    return sender_uses_public_domain(sender) and contains_organization_terms(text)
+
+
+def sender_uses_public_domain(sender: str) -> bool:
+    domain = extract_sender_domain(sender)
+    return domain in PUBLIC_EMAIL_DOMAINS
+
+
+def extract_sender_domain(sender: str) -> str:
+    match = EMAIL_DOMAIN_PATTERN.search(sender)
+    if not match:
+        return ""
+
+    return match.group(1).strip(" <>.,;:").lower()
+
+
+def contains_organization_terms(text: str) -> bool:
+    normalized_text = text.lower()
+    return any(term in normalized_text for term in ORGANIZATION_TERMS)
+
+
+def find_insecure_http_urls(urls: list[str]) -> list[str]:
+    return [url for url in urls if url.lower().startswith("http://")]
 
 
 def score_attachments(attachments: list[dict[str, Any]]) -> tuple[int, list[str]]:
