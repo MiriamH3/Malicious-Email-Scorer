@@ -121,7 +121,8 @@ function addAnalysisWidgets_(section, analysis) {
       .setText(escapeCardText_(analysis.score === undefined ? "Unknown" : analysis.score))
   );
   section.addWidget(
-    CardService.newTextParagraph()
+    CardService.newDecoratedText()
+      .setTopLabel("Reasoning")
       .setText(escapeCardText_(analysis.reasoning || "No reasoning returned."))
   );
 }
