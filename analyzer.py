@@ -1,6 +1,7 @@
 import difflib
 import ipaddress
 import re
+from email.utils import parseaddr
 from typing import Any
 from urllib.parse import urlparse
 
@@ -18,6 +19,17 @@ SUSPICIOUS_KEYWORDS = {
     "suspended": 12,
     "urgent": 10,
     "verify": 10,
+}
+
+BODY_LOW_SIGNAL_KEYWORDS = {
+    "account",
+    "bank",
+    "payment",
+}
+
+URGENCY_KEYWORDS = {
+    "suspended",
+    "urgent",
 }
 
 PUBLIC_EMAIL_DOMAINS = {
@@ -151,10 +163,9 @@ def score_email(
     reasons = []
     combined_text = f"{subject}\n{body}".lower()
 
-    for keyword, weight in SUSPICIOUS_KEYWORDS.items():
-        if keyword in combined_text:
-            score += weight
-            reasons.append(f"Contains suspicious keyword or phrase: '{keyword}'.")
+    keyword_score, keyword_reasons = score_keyword_signals(subject, body)
+    score += keyword_score
+    reasons.extend(keyword_reasons)
 
     urls = collect_urls(body, links)
     if urls:
@@ -183,6 +194,10 @@ def score_email(
             f"Contains {len(ip_address_urls)} link(s) that use a direct IP address."
         )
 
+    if has_urgency_signal(subject, body) and urls:
+        score += 30
+        reasons.append("Combines urgency language with link(s), increasing phishing risk.")
+
     if sender and not EMAIL_DOMAIN_PATTERN.search(sender):
         score += 8
         reasons.append("Sender format does not clearly expose an email domain.")
@@ -192,6 +207,10 @@ def score_email(
         reasons.append(
             "Sender uses a public email domain while the message references a bank or company."
         )
+
+    display_name_score, display_name_reasons = score_display_name_spoofing(sender)
+    score += display_name_score
+    reasons.extend(display_name_reasons)
 
     typosquatting_score, typosquatting_reasons = score_sender_typosquatting(sender)
     score += typosquatting_score
@@ -206,6 +225,41 @@ def score_email(
         reasons.append("No obvious phishing indicators were detected by the current rules.")
 
     return score, reasons
+
+
+def score_keyword_signals(subject: str, body: str) -> tuple[int, list[str]]:
+    score = 0
+    reasons = []
+    subject_text = subject.lower()
+    body_text = body.lower()
+
+    for keyword, weight in SUSPICIOUS_KEYWORDS.items():
+        if keyword in subject_text:
+            keyword_score = weight * 2
+            score += keyword_score
+            reasons.append(
+                f"Subject contains suspicious keyword or phrase: '{keyword}'."
+            )
+            continue
+
+        if keyword not in body_text:
+            continue
+
+        keyword_score = 2 if keyword in BODY_LOW_SIGNAL_KEYWORDS else weight
+        score += keyword_score
+        if keyword in BODY_LOW_SIGNAL_KEYWORDS:
+            reasons.append(
+                f"Body contains common financial keyword '{keyword}' with reduced weight."
+            )
+        else:
+            reasons.append(f"Body contains suspicious keyword or phrase: '{keyword}'.")
+
+    return score, reasons
+
+
+def has_urgency_signal(subject: str, body: str) -> bool:
+    combined_text = f"{subject}\n{body}".lower()
+    return any(keyword in combined_text for keyword in URGENCY_KEYWORDS)
 
 
 def is_public_domain_impersonating_organization(sender: str, text: str) -> bool:
@@ -228,6 +282,34 @@ def extract_sender_domain(sender: str) -> str:
 def contains_organization_terms(text: str) -> bool:
     normalized_text = text.lower()
     return any(term in normalized_text for term in ORGANIZATION_TERMS)
+
+
+def score_display_name_spoofing(sender: str) -> tuple[int, list[str]]:
+    display_name = extract_sender_display_name(sender)
+    if not display_name or not sender_uses_public_domain(sender):
+        return 0, []
+
+    if not contains_organization_terms(display_name):
+        return 0, []
+
+    domain = extract_sender_domain(sender)
+    return 60, [
+        f"Sender display name '{display_name}' references an organization while using public domain '{domain}'."
+    ]
+
+
+def extract_sender_display_name(sender: str) -> str:
+    display_name, email_address = parseaddr(sender)
+    if display_name:
+        return display_name.strip().strip("\"'")
+
+    if email_address and email_address != sender:
+        return ""
+
+    if "<" in sender:
+        return sender.split("<", 1)[0].strip().strip("\"'")
+
+    return ""
 
 
 def find_insecure_http_urls(urls: list[str]) -> list[str]:
