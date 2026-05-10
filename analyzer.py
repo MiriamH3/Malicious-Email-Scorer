@@ -1,6 +1,8 @@
 import difflib
+import ipaddress
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 
 SUSPICIOUS_KEYWORDS = {
@@ -54,6 +56,13 @@ POPULAR_BRAND_DOMAINS = [
     "microsoft",
     "paypal",
 ]
+
+URL_SHORTENERS = {
+    "bit.ly",
+    "rebrand.ly",
+    "t.co",
+    "tinyurl.com",
+}
 
 NUMBER_SUBSTITUTIONS = str.maketrans(
     {
@@ -136,6 +145,22 @@ def score_email(
         score += min(len(insecure_urls) * 12, 24)
         reasons.append(f"Contains {len(insecure_urls)} insecure HTTP link(s).")
 
+    shortened_urls = find_shortened_urls(urls)
+    if shortened_urls:
+        score += 35
+        reasons.append(
+            "Contains URL shortener link(s): "
+            + ", ".join(sorted({get_url_hostname(url) for url in shortened_urls}))
+            + "."
+        )
+
+    ip_address_urls = find_direct_ip_urls(urls)
+    if ip_address_urls:
+        score += 60
+        reasons.append(
+            f"Contains {len(ip_address_urls)} link(s) that use a direct IP address."
+        )
+
     if sender and not EMAIL_DOMAIN_PATTERN.search(sender):
         score += 8
         reasons.append("Sender format does not clearly expose an email domain.")
@@ -185,6 +210,42 @@ def contains_organization_terms(text: str) -> bool:
 
 def find_insecure_http_urls(urls: list[str]) -> list[str]:
     return [url for url in urls if url.lower().startswith("http://")]
+
+
+def find_shortened_urls(urls: list[str]) -> list[str]:
+    return [
+        url
+        for url in urls
+        if normalize_url_hostname(get_url_hostname(url)) in URL_SHORTENERS
+    ]
+
+
+def find_direct_ip_urls(urls: list[str]) -> list[str]:
+    return [url for url in urls if is_direct_ip_url(url)]
+
+
+def is_direct_ip_url(url: str) -> bool:
+    hostname = get_url_hostname(url)
+    if not hostname:
+        return False
+
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+
+    return True
+
+
+def get_url_hostname(url: str) -> str:
+    return (urlparse(url).hostname or "").lower()
+
+
+def normalize_url_hostname(hostname: str) -> str:
+    if hostname.startswith("www."):
+        return hostname[4:]
+
+    return hostname
 
 
 def score_sender_typosquatting(sender: str) -> tuple[int, list[str]]:
